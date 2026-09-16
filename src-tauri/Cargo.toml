@@ -1,6 +1,6 @@
 [package]
 name = "simple-countdown"
-version = "1.0"
+version = "1.0.0"
 description = "简易倒计时"
 authors = ["liang"]
 edition = "2021"
