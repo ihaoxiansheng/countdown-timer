@@ -1,0 +1,32 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Rust
+src-tauri/target/
+src-tauri/Cargo.lock
+
+# Node.js
+node_modules/
+
+# Tauri
+src-tauri/WixTools/
+
+# 构建产物
+*.dmg
+*.app
+*.exe
+*.msi
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 日志
+*.log
+npm-debug.log*

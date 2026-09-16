@@ -1,0 +1,32 @@
+[package]
+name = "simple-countdown"
+version = "1.0"
+description = "简易倒计时"
+authors = ["liang"]
+edition = "2021"
+rust-version = "1.77"
+
+# Tauri 需要一个 build 脚本来生成上下文(图标、权限、配置的编译期产物)
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# macos-private-api:窗口透明背景在 macOS 上必须开这个特性,
+# 否则 transparent:true 不生效,四角就裁不出圆弧(圆角是靠 CSS 裁切实现的)。
+tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
+# 状态快照要序列化成 JSON 推给前端
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[features]
+# Tauri 默认开启自定义协议,发布构建也走同一套
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+# 发布构建:体积和启动速度优先
+[profile.release]
+opt-level = "s"      # 按体积优化,倒计时没有计算热点
+lto = true           # 链接期优化,进一步压体积
+codegen-units = 1    # 牺牲编译速度换更好的优化结果
+panic = "abort"      # 不需要 unwind,省掉一份栈展开表
+strip = true         # 去掉符号表

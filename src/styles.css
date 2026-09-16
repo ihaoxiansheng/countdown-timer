@@ -1,0 +1,137 @@
+/* ============================================================
+   简易倒计时 - 界面样式
+   配色完全对齐 macOS/Swift 版:白底、黑字,运行中转绿,暂停琥珀,超时红。
+   ============================================================ */
+
+:root {
+    /* 状态配色。取值来自 Apple 的 system 色板,和 Swift 版保持一致 */
+    --color-idle: #000000;          /* 空闲:黑字 */
+    --color-running: #34c759;       /* 运行中:systemGreen */
+    --color-paused: #ff9500;        /* 暂停:systemOrange */
+    --color-overtime: #ff3b30;      /* 超时/响铃:systemRed */
+    --color-bar-normal: #30b0c7;    /* 进度条正常态:systemTeal */
+    --color-bar-track: #e0e0e0;     /* 进度条轨道:浅灰(对应 calibratedWhite 0.88) */
+
+    /* 暂停时数字压暗到这个不透明度,让播放三角成为视觉重心 */
+    --paused-text-alpha: 0.45;
+
+    /* 窗口圆角半径。decorations:false 之后系统不再给窗口裁圆角,
+       只能自己画。10px 对应 macOS 小尺寸窗口的默认圆角,和 Swift 版观感一致。 */
+    --window-radius: 10px;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html,
+body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    /* 必须透明:窗口本体已设为 transparent,白底改由 #root 画。
+       这里若留白色,四角被裁掉的部分会露出白块,圆角就白做了。 */
+    background: transparent;
+    /* 禁掉文本选中与原生右键菜单,避免拖动窗口时误选中数字 */
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: default;
+}
+
+/* ---------- 主容器 ---------- */
+
+#root {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    background: #ffffff;
+
+    /* 圆角由这一层负责:窗口透明,可见的白底就是 #root。
+       overflow:hidden 让底部进度条的两个下角也跟着被裁进圆角,
+       否则进度条会以直角戳出圆弧之外。 */
+    border-radius: var(--window-radius);
+    overflow: hidden;
+}
+
+/* ---------- 大号数字 ---------- */
+
+#time {
+    position: absolute;
+    /* 垂直方向给底部进度条留出空间,数字在剩余区域内居中。
+       这里刻意不写 top:上下同时约束会让 JS 写入的 height 失效,
+       数字带的高度就跟三角的换算基准脱钩,两者会错位。 */
+    left: 0;
+    right: 0;
+    bottom: 3px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    /* 鼠标事件一律穿透到 #root。
+       原生拖动靠 data-tauri-drag-region 命中的元素来判定,
+       数字盖住了整个窗口中部,不穿透的话按在数字上就拖不动窗口。 */
+    pointer-events: none;
+
+    /* 等宽数字:tabular-nums 保证秒数跳动时宽度不抖 */
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display",
+                 "Helvetica Neue", "PingFang SC", sans-serif;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
+    font-weight: 500;              /* 对应 Swift 版的 .medium 字重 */
+    line-height: 1;
+    white-space: nowrap;
+
+    color: var(--color-idle);
+    /* 字号由 JS 写入 style.fontSize,这里只兜个底 */
+    font-size: 48px;
+}
+
+/* 状态配色:类名由 JS 挂在 #root 上,数字与进度条各自取色 */
+#root.state-running #time { color: var(--color-running); }
+#root.state-paused  #time { color: var(--color-paused); opacity: var(--paused-text-alpha); }
+#root.state-overtime #time { color: var(--color-overtime); }
+
+/* 响铃闪烁:isAlerting 为假的那一帧把数字整体隐去,形成闪动 */
+#root.alert-off #time { opacity: 0; }
+
+/* ---------- 暂停时的播放三角 ---------- */
+
+#play-glyph {
+    position: absolute;
+    display: none;                 /* 默认不显示,暂停时由 CSS 的 state-paused 打开 */
+
+    /* 水平居中:三角要压在数字正中。
+       只写 absolute 而不给水平位置的话会退回 left:0 贴到窗口左边缘,
+       所以这里用 50% + 自身宽度的一半做位移居中。
+       垂直位置与尺寸仍由 JS 按数字的 capHeight 换算后写入。 */
+    left: 50%;
+    transform: translateX(-50%);
+
+    fill: var(--color-paused);
+    pointer-events: none;          /* 不挡住底下的拖动/点击 */
+}
+
+#root.state-paused #play-glyph { display: block; }
+
+/* ---------- 底部进度条 ---------- */
+
+#bar-track {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 3px;
+    background: var(--color-bar-track);
+}
+
+#bar-fill {
+    height: 100%;
+    width: 0;
+    background: var(--color-bar-normal);
+    /* 不加过渡:进度每 100ms 刷新一次,过渡反而会拖尾 */
+}
+
+#root.state-paused   #bar-fill { background: var(--color-paused); }
+#root.state-overtime #bar-fill { background: var(--color-overtime); }

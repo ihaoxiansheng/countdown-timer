@@ -1,0 +1,11 @@
+{
+  "name": "simple-countdown",
+  "version": "1.0",
+  "private": true,
+  "scripts": {
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.9.2"
+  }
+}
