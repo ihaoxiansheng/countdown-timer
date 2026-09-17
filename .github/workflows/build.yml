@@ -25,10 +25,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 20
 
@@ -45,42 +45,42 @@ jobs:
 
       - name: Upload macOS dmg (aarch64)
         if: matrix.platform == 'macos-latest' && matrix.target == 'aarch64-apple-darwin'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: macos-aarch64-dmg
           path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
 
       - name: Upload macOS dmg (x86_64)
         if: matrix.platform == 'macos-latest' && matrix.target == 'x86_64-apple-darwin'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: macos-x86_64-dmg
           path: src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
 
       - name: Upload macOS app (aarch64)
         if: matrix.platform == 'macos-latest' && matrix.target == 'aarch64-apple-darwin'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: macos-aarch64-app
           path: src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app
 
       - name: Upload macOS app (x86_64)
         if: matrix.platform == 'macos-latest' && matrix.target == 'x86_64-apple-darwin'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: macos-x86_64-app
           path: src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.app
 
       - name: Upload Windows installer
         if: matrix.platform == 'windows-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: windows-installer
           path: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
 
       - name: Upload Windows portable
         if: matrix.platform == 'windows-latest'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: windows-portable
           path: src-tauri/target/x86_64-pc-windows-msvc/release/*.exe
