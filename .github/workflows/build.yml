@@ -84,3 +84,29 @@ jobs:
         with:
           name: windows-portable
           path: src-tauri/target/x86_64-pc-windows-msvc/release/*.exe
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display structure of downloaded files
+        run: ls -R artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/macos-aarch64-dmg/*.dmg
+            artifacts/macos-x86_64-dmg/*.dmg
+            artifacts/windows-installer/*.exe
+          fail_on_unmatched_files: false
+          generate_release_notes: true
