@@ -79,25 +79,18 @@ function initBaseMetrics() {
  * 把后端推来的一帧状态画到界面上。
  * @param {object} s 后端 Snapshot:{ text, progress, phase }
  *   phase 取值:idle / running / paused / overtime / overtimePaused /
- *              stopwatch / stopwatchPaused / alerting
+ *              stopwatch / stopwatchPaused
  */
 function render(s) {
     timeEl.textContent = s.text;
-
-    // 响铃闪烁:后端在"熄灭"的那半帧把 phase 改推成 alerting,
-    // 这里只负责挂类名,真正的隐去由 CSS 的 #root.alert-off 完成。
-    const alerting = s.phase === "alerting";
-    rootEl.classList.toggle("alert-off", alerting);
 
     // 三种暂停(倒计时暂停、超时暂停、秒表暂停)共用一套视觉
     const paused = s.phase === "paused"
         || s.phase === "overtimePaused"
         || s.phase === "stopwatchPaused";
 
-    // 超时态:归零后的红色。响铃帧也归到这一类,配色保持连续。
-    const overtime = s.phase === "overtime"
-        || s.phase === "overtimePaused"
-        || alerting;
+    // 超时态:归零后的红色
+    const overtime = s.phase === "overtime" || s.phase === "overtimePaused";
 
     // 走时态:倒计时进行中或秒表进行中,数字转绿
     const running = s.phase === "running" || s.phase === "stopwatch";

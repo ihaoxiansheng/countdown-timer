@@ -32,9 +32,10 @@ const MIN_H: f64 = 44.0;
 /// 推帧间隔。100ms 足够让秒数跳变看起来即时,又不会白耗 CPU。
 const TICK_MS: u64 = 100;
 
-/// 结束提醒的闪烁总次数与响铃轮数。与 macOS 版一致:
-/// 闪 12 次(约 6 秒)后停下并保持红色,前 3 轮各响一声。
-const ALERT_FLASH_TOTAL: u32 = 12;
+/// 结束提醒的计时帧数。响铃共 3 声,分布在前 2 秒内:
+/// 归零时第 1 声,0.8 秒后第 2 声,1.6 秒后第 3 声。
+/// 保留 20 帧(2.0 秒)余量,确保最后一声响完。
+const ALERT_DURATION_TICKS: u32 = 20;
 
 // ---------- 共享状态 ----------
 
@@ -42,7 +43,7 @@ const ALERT_FLASH_TOTAL: u32 = 12;
 /// Tauri 的命令处理器可能在不同线程被调用,所以用 Mutex 包起来。
 struct AppState {
     timer: Mutex<Timer>,
-    /// 结束提醒的剩余闪烁次数。大于 0 表示正在响铃闪烁。
+    /// 结束提醒的剩余计时帧数。大于 0 表示正在响铃提醒。
     alert_left: Mutex<u32>,
 }
 
@@ -396,21 +397,21 @@ fn spawn_tick_loop(app: AppHandle) {
         if crossed_zero {
             // 归零:启动响铃提醒(如果开关打开的话)
             if alert_enabled {
-                *state.alert_left.lock().unwrap() = ALERT_FLASH_TOTAL;
+                *state.alert_left.lock().unwrap() = ALERT_DURATION_TICKS;
                 play_alert_sound();
             }
         }
 
         // 响铃提醒:只响声,不闪烁。原版虽有 isAlerting 翻转逻辑,
-        // 但 draw() 里 isOvertime 恒为真,所以 isAlerting 不改变颜色,
-        // 闪烁是"哑"的——这里也对齐成只响铃,phase 不动。
+        // 但 draw() 里 isOvertime 恒为真,所以 isAlerting 不改变颜色。
         let snap = state.timer.lock().unwrap().snapshot();
         let mut alert_left = state.alert_left.lock().unwrap();
         if *alert_left > 0 {
             *alert_left -= 1;
 
-            // 前 3 轮各响一声:每 20 帧(2 秒)响一次
-            if *alert_left > ALERT_FLASH_TOTAL.saturating_sub(3) * 5 && *alert_left % 20 == 0 {
+            // 补充响铃:在倒数到 12 帧(0.8 秒后)和 4 帧(1.6 秒后)时各响一声,
+            // 加上归零那一声,共 3 声,分布在前 2 秒内。
+            if *alert_left == 12 || *alert_left == 4 {
                 play_alert_sound();
             }
         }

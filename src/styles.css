@@ -93,9 +93,6 @@ body {
 #root.state-paused  #time { color: var(--color-paused); opacity: var(--paused-text-alpha); }
 #root.state-overtime #time { color: var(--color-overtime); }
 
-/* 响铃闪烁:isAlerting 为假的那一帧把数字整体隐去,形成闪动 */
-#root.alert-off #time { opacity: 0; }
-
 /* ---------- 暂停时的播放三角 ---------- */
 
 #play-glyph {
