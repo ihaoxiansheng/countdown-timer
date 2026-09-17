@@ -2,6 +2,7 @@
   "name": "simple-countdown",
   "version": "1.0.0",
   "private": true,
+  "license": "Apache-2.0",
   "scripts": {
     "tauri": "tauri"
   },

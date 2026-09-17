@@ -2,7 +2,9 @@
 name = "simple-countdown"
 version = "1.0.0"
 description = "简易倒计时"
-authors = ["liang"]
+authors = ["xu.liang"]
+# 开源协议:Apache-2.0,与仓库根目录的 LICENSE 文件保持一致
+license = "Apache-2.0"
 edition = "2021"
 rust-version = "1.77"
 
