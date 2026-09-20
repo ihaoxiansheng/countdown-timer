@@ -13,10 +13,17 @@
          "激活窗口"吃掉配对的 mouseup,于是窗口黏在鼠标上甩不掉。
          改由 main.js 判断位移超过阈值后再主动请求拖动。 -->
     <div id="root" title="右键设置倒计时">
-        <!-- 大号数字。等宽数字字体,字号由 JS 按窗口尺寸实时换算 -->
-        <div id="time">00:00</div>
+        <!-- 大号数字。字号由 JS 按窗口尺寸实时换算。
+             内容刻意留空,由 main.js 的 setTimeText() 逐字符生成 <span class="ch">:
+             整串文本 + tabular-nums 靠不住 —— 它只统一"数字"宽度,冒号作为标点
+             比数字窄;而 Windows 上这套字体栈(-apple-system / SF Pro Display /
+             PingFang SC)根本不存在,回退到通用 sans-serif 后连等宽数字都没有,
+             "1" 比 "0" 明显窄。于是 00:10 右半边比左半边窄,整串居中时冒号被挤偏。
+             每个字符装进定宽盒子(宽度由 JS 按实测字符宽度写入)后,
+             MM:SS 左右两段宽度恒等,冒号必然落在正中,与字体无关。 -->
+        <div id="time"></div>
 
-        <!-- 暂停时叠在数字正中的播放三角,表达"点一下继续" -->
+        <!-- 暂停时叠在冒号正中的播放三角,表达"点一下继续" -->
         <svg id="play-glyph" viewBox="0 0 100 100" aria-hidden="true">
             <polygon points="0,0 0,100 86,50" />
         </svg>

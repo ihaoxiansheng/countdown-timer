@@ -16,6 +16,13 @@ const timeEl = document.getElementById("time");
 const glyphEl = document.getElementById("play-glyph");
 const barFillEl = document.getElementById("bar-fill");
 
+// #time 里的字符盒子(每个字符一个 span),由 setTimeText() 重建。
+// 三角的水平位置直接取冒号盒子排版后的实测坐标,不再做任何宽度推算。
+let charEls = [];
+
+// 当前已写入 #time 的文案。文案没变就不重建 DOM(后端每 100ms 推一帧)。
+let currentText = "";
+
 // ---------- 版面常量 ----------
 // 与 macOS 版保持同一套比例:留白和进度条都用固定磅值封顶,
 // 窗口小的时候按比例收缩,放大后不再继续扩张。
@@ -26,51 +33,103 @@ const kBarMaxHeight = 3;        // 进度条最大高度(px)
 const kPadXMax = 8;             // 左右留白上限(px)
 const kPadYMax = 5;             // 上下留白上限(px)
 
-// 度量基准字号:先在这个字号下量一次文案宽度,再按比例换算出实际可用字号。
-// 这样避免每次 layout 都反复试探字号,和 Swift 版的换算逻辑完全一致。
+// 度量基准字号:先在这个字号下量一次字符宽度,再按比例换算出实际可用字号。
+// 这样避免每次 layout 都反复试探字号。
 const kBaseFontSize = 100;
+
+// 数字大写高度(capHeight)相对字号的比例。
+// 刻意用常量而不是实测值:两个平台的字体不同,实测 capHeight 会让同样大小的
+// 窗口在 macOS 与 Windows 上算出不同字号,三角的换算基准也跟着漂。
+const kCapHeightRatio = 0.72;
 
 // 播放三角的几何比例,单位是"相对数字 capHeight 的倍数"
 const kGlyphHeightRatio = 0.82;
 const kGlyphWidthRatio = 0.86;
 
-// 用于精确测量文案宽度与 capHeight 的 canvas(懒创建)
-let measureCanvas = null;
+// 隐藏的度量元素(懒创建)。
+// 刻意不用 canvas:canvas 的 font 字符串不认 font-variant-numeric,量出来的
+// 宽度和真正渲染的等宽数字对不上;Windows 上整套字体栈缺失、回退到通用
+// sans-serif 之后差得更多。用真实 DOM 元素量,才和屏幕上的排版一致。
+let measureEl = null;
 
-// 基准字号下固定参考文案的度量结果,启动时算一次,所有帧复用。
-// 用 "88:88" 作为参考(5 字符),等宽数字保证所有 5 字符串(00:10, 01:23 等)宽度相同。
-let baseMetrics5 = null;
-let baseMetrics7 = null;  // "8:88:88"(7 字符),用于 1 小时以上的文案
+// 基准字号下的字符宽度,启动时量一次,所有帧复用。
+// digitW 取 0-9 里最宽的那个:没有等宽特性时(Windows 回退字体)"1" 比 "0" 窄,
+// 统一按最宽值当上限,字号就不会因为 00:09 → 00:10 而抖动。
+let baseMetrics = null;
 
 /**
- * 测量指定字号下文案的实际宽度与 capHeight。
- * 返回 { width, capHeight },单位 px。
+ * 懒创建度量元素。字体相关属性全部从 #time 的计算样式里拷过来,
+ * 这样 CSS 改了字体栈,度量结果跟着变,两边不会脱钩。
  */
-function measureText(text, fontSize) {
-    if (!measureCanvas) {
-        measureCanvas = document.createElement("canvas");
-    }
-    const ctx = measureCanvas.getContext("2d");
-    // 字体串要和 CSS 的 #time 保持一致:font-weight、font-variant-numeric。
-    // font-variant-numeric 在 canvas font 字符串里不直接支持,但等宽数字的
-    // CSS 特性已经让浏览器把字体选成等宽变体,measureText 会反映这个宽度。
-    ctx.font = `500 ${fontSize}px -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", "PingFang SC", sans-serif`;
-    const metrics = ctx.measureText(text);
-    // actualBoundingBoxAscent 是从基线到字形顶部的实际距离,对于纯数字等同于 capHeight
-    const capHeight = metrics.actualBoundingBoxAscent || fontSize * 0.72;
-    return { width: metrics.width, capHeight };
+function ensureMeasureEl() {
+    if (measureEl) return measureEl;
+
+    const cs = getComputedStyle(timeEl);
+    measureEl = document.createElement("span");
+    measureEl.style.position = "absolute";
+    measureEl.style.left = "-9999px";      // 挪出可视区,不参与版面
+    measureEl.style.top = "0";
+    measureEl.style.visibility = "hidden";
+    measureEl.style.whiteSpace = "pre";
+    measureEl.style.fontFamily = cs.fontFamily;
+    measureEl.style.fontWeight = cs.fontWeight;
+    measureEl.style.fontVariantNumeric = cs.fontVariantNumeric;
+    measureEl.style.fontFeatureSettings = cs.fontFeatureSettings;
+    measureEl.style.fontSize = `${kBaseFontSize}px`;
+    measureEl.style.lineHeight = "1";
+    document.body.appendChild(measureEl);
+    return measureEl;
 }
 
 /**
- * 初始化基准度量:在基准字号下测量固定参考文案。
- * 用 "88:88"(5 字符)和 "8:88:88"(7 字符)作为参考,
- * 等宽数字保证所有相同字符数的串宽度一致,字号就不会抖动。
+ * 在基准字号下测量单个字符的真实渲染宽度(px)。
+ */
+function measureChar(ch) {
+    const el = ensureMeasureEl();
+    el.textContent = ch;
+    return el.getBoundingClientRect().width;
+}
+
+/**
+ * 初始化基准度量:最宽的数字宽度 + 冒号宽度。
+ * 冒号是标点,比数字窄得多,必须单独量,不能拿数字宽度顶替。
  */
 function initBaseMetrics() {
-    if (!baseMetrics5) {
-        baseMetrics5 = measureText("88:88", kBaseFontSize);
-        baseMetrics7 = measureText("8:88:88", kBaseFontSize);
+    if (baseMetrics) return;
+
+    let digitW = 0;
+    for (let d = 0; d <= 9; d++) {
+        digitW = Math.max(digitW, measureChar(String(d)));
     }
+    baseMetrics = { digitW, colonW: measureChar(":") };
+}
+
+// 非数字、非冒号字符的宽度缓存(比如空闲态的 "—"),量一次就记下来
+const otherCharWidths = new Map();
+
+/**
+ * 基准字号下单个字符占的宽度(px)。
+ * 数字一律返回"最宽数字"的宽度:回退字体没有等宽数字时 "1" 比 "0" 窄,
+ * 统一按最宽值排版,00:09 → 00:10 的瞬间整串宽度才不变,字号也就不抖。
+ */
+function charWidth(ch) {
+    if (ch >= "0" && ch <= "9") return baseMetrics.digitW;
+    if (ch === ":") return baseMetrics.colonW;
+    if (!otherCharWidths.has(ch)) {
+        otherCharWidths.set(ch, measureChar(ch));
+    }
+    return otherCharWidths.get(ch);
+}
+
+/**
+ * 基准字号下整串文案的宽度(px)。数字按最宽数字算,同格式文案宽度恒定。
+ */
+function textWidth(text) {
+    let width = 0;
+    for (const ch of text) {
+        width += charWidth(ch);
+    }
+    return width;
 }
 
 // ---------- 状态渲染 ----------
@@ -92,7 +151,7 @@ function render(s) {
     }
 
     lastSnapshot = s;  // 存一份供 optimisticToggle 使用
-    timeEl.textContent = s.text;
+    setTimeText(s.text);
 
     // 三种暂停(倒计时暂停、超时暂停、秒表暂停)共用一套视觉
     const paused = s.phase === "paused"
@@ -119,17 +178,82 @@ function render(s) {
 }
 
 /**
- * 按当前窗口尺寸算出数字字号与各处间距。
+ * 把文案写进 #time,一个字符一个 span。
+ *
+ * 刻意不用一整串文本 + font-variant-numeric:tabular-nums 只统一"数字"宽度,
+ * 冒号作为标点比数字窄得多;更要紧的是 Windows 上 -apple-system / SF Pro
+ * Display / PingFang SC 整套字体栈都不存在,回退到通用 sans-serif 之后连
+ * 等宽数字特性都没有,"1" 比 "0" 明显窄。于是 00:10 的右半边比左半边窄,
+ * 整串居中时冒号被挤到右边 —— 这就是截图里冒号和三角一起偏的根因。
+ *
+ * 逐字符装进定宽盒子(宽度在 layout() 里按实测字符宽度写入)之后,
+ * MM:SS 的左右两段宽度恒等,冒号必然落在窗口正中,和字体无关。
+ *
+ * @param {string} text 形如 "00:00" / "1:00:00" 的时间文案
+ */
+function setTimeText(text) {
+    // 文案没变就不动 DOM:后端每 100ms 推一帧,大部分帧文案是一样的
+    if (text === currentText) return;
+    currentText = text;
+
+    // 逐个摘掉旧字符盒子。不用 innerHTML,避免每帧重新解析 HTML。
+    while (timeEl.firstChild) {
+        timeEl.removeChild(timeEl.firstChild);
+    }
+
+    charEls = [];
+    for (const ch of text) {
+        const span = document.createElement("span");
+        span.className = "ch";
+        span.textContent = ch;
+        timeEl.appendChild(span);
+        charEls.push(span);
+    }
+}
+
+/**
+ * 挑出三角要盖住的那个冒号元素。
+ * MM:SS 只有一个冒号,直接用它(它就在窗口正中)。
+ * H:MM:SS 有两个,取离整串水平中心更近的那个,三角才不会跑到边上。
+ * @returns {HTMLElement|null} 没有冒号时返回 null
+ */
+function pickColonEl() {
+    const colons = charEls.filter((el) => el.textContent === ":");
+    if (colons.length === 0) return null;
+    if (colons.length === 1) return colons[0];
+
+    // 整串文案的水平中心:取首字符左边缘与末字符右边缘的中点
+    const firstRect = charEls[0].getBoundingClientRect();
+    const lastRect = charEls[charEls.length - 1].getBoundingClientRect();
+    const textCenter = (firstRect.left + lastRect.right) / 2;
+
+    let best = colons[0];
+    let bestDist = Infinity;
+    for (const el of colons) {
+        const rect = el.getBoundingClientRect();
+        const dist = Math.abs(rect.left + rect.width / 2 - textCenter);
+        if (dist < bestDist) {
+            bestDist = dist;
+            best = el;
+        }
+    }
+    return best;
+}
+
+/**
+ * 按当前窗口尺寸算出数字字号、各字符盒子的宽度与三角的位置。
  * 取"高度受限"与"宽度受限"中更小的那个缩放比,保证数字不会溢出。
- * 换算逻辑完全对齐 Swift 版:在基准字号下量一次固定参考文案,所有帧复用这个宽度。
- * 等宽数字保证相同字符数的串宽度一致(88:88 = 00:10),字号稳定不抖动。
+ *
+ * capHeight 用固定比例常量而不是实测值:两平台字体不同,实测值会让同尺寸
+ * 窗口在 macOS 与 Windows 上算出不同字号,三角的换算基准跟着一起漂。
  */
 function layout() {
-    initBaseMetrics();  // 懒初始化基准度量
+    initBaseMetrics();  // 懒初始化基准字符宽度
 
     const w = rootEl.clientWidth;
     const h = rootEl.clientHeight;
     if (w === 0 || h === 0) return;
+    if (charEls.length === 0) return;  // 首帧文案还没到
 
     // 进度条与留白:按比例算,再用固定磅值封顶
     const barH = Math.max(kBarMinHeight, Math.min(kBarMaxHeight, h * 0.03));
@@ -140,16 +264,14 @@ function layout() {
     const bandH = Math.max(h - barH - padY * 2, 1);
     const usableW = Math.max(w - padX * 2, 1);
 
-    // 按当前文案字符数选用对应的基准度量:5 字符用 "88:88",7 字符及以上用 "8:88:88"。
-    // 等宽数字保证相同字符数的串宽度完全一致,字号就不会因 00:09 → 00:10 而抖动。
-    const text = timeEl.textContent;
-    const charCount = text.length;
-    const base = charCount <= 5 ? baseMetrics5 : baseMetrics7;
-    // 实际字符数:5字符文案用5字符基准,其他用7字符基准(≥7的按7等分)
-    const referenceCharCount = charCount <= 5 ? 5 : Math.max(charCount, 7);
-    const scale = Math.min(bandH / base.capHeight, usableW * referenceCharCount / (base.width * charCount));
+    // 基准字号下整串宽度。数字一律按最宽数字计,所以同格式文案宽度恒定,
+    // 字号不会因为 00:09 → 00:10 而抖动。
+    const baseW = Math.max(textWidth(currentText || ""), 1);
+
+    // 高度受限比与宽度受限比取小者
+    const scale = Math.min(bandH / (kBaseFontSize * kCapHeightRatio), usableW / baseW);
     const fontSize = kBaseFontSize * scale;
-    const capH = base.capHeight * scale;
+    const capH = fontSize * kCapHeightRatio;
 
     timeEl.style.fontSize = `${fontSize}px`;
     // 数字垂直居中于高度带:底部留出进度条与下留白的位置
@@ -158,34 +280,29 @@ function layout() {
 
     barFillEl.parentElement.style.height = `${barH}px`;
 
-    // 播放三角跟着 capHeight 走,盖在冒号正中。
-    // 冒号位置取决于文案格式:5 字符 MM:SS 的冒号在索引 2,占 2.5/5 = 50%;
-    // 7 字符 H:MM:SS 的冒号在索引 1,占 1.5/7 ≈ 21.4%;
-    // 8+ 字符 10:MM:SS 等用实际字符数等分。
-    // 用等宽字体测出文案总宽度后,按冒号的字符位置算出它的像素坐标,
-    // 三角的水平中心对齐那个位置,这样无论几位数都不会偏。
+    // 把实测字符宽度按同一个缩放比写进每个盒子,排版就完全可控了
+    for (const el of charEls) {
+        el.style.width = `${charWidth(el.textContent) * scale}px`;
+    }
+
+    // 三角尺寸跟着 capHeight 走
     const glyphH = capH * kGlyphHeightRatio;
     const glyphW = glyphH * kGlyphWidthRatio;
     glyphEl.style.height = `${glyphH}px`;
     glyphEl.style.width = `${glyphW}px`;
 
-    // 冒号在文案里的索引(0-based)
-    const colonIdx = text.indexOf(":");
-    if (colonIdx >= 0) {
-        // 等宽字体下每个字符占的宽度,用实际字符数等分
-        const actualWidth = base.width * scale * charCount / referenceCharCount;
-        const charW = actualWidth / charCount;
-        // 冒号中心的水平坐标(相对文案左边缘):索引处 + 半个字符宽
-        const colonCenterInText = (colonIdx + 0.5) * charW;
-        // 文案左边缘相对窗口左边缘的偏移:窗口中心 - 文案宽度一半
-        const textLeft = (w - actualWidth) / 2;
-        // 冒号中心相对窗口左边缘的绝对坐标
-        const colonCenterAbs = textLeft + colonCenterInText;
-        // 三角左边缘 = 冒号中心 - 三角宽度一半
-        glyphEl.style.left = `${colonCenterAbs - glyphW / 2}px`;
+    // 三角水平位置:直接取冒号盒子排版后的实测坐标,不做任何宽度推算。
+    // 上面刚写完宽度,这里读 rect 会触发一次同步重排,拿到的就是新版面。
+    const colonEl = pickColonEl();
+    if (colonEl) {
+        const rootRect = rootEl.getBoundingClientRect();
+        const colonRect = colonEl.getBoundingClientRect();
+        // 冒号中心相对 #root 左边缘的坐标
+        const colonCenter = colonRect.left + colonRect.width / 2 - rootRect.left;
+        glyphEl.style.left = `${colonCenter - glyphW / 2}px`;
     } else {
-        // 没有冒号(比如空闲态的 "—"),fallback 到窗口中心
-        glyphEl.style.left = `calc(50% - ${glyphW / 2}px)`;
+        // 没有冒号(异常文案)时落回窗口正中
+        glyphEl.style.left = `${w / 2 - glyphW / 2}px`;
     }
 
     // 垂直方向:三角中心对齐数字带的中心

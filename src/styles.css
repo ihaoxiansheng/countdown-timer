@@ -65,9 +65,12 @@ body {
     left: 0;
     right: 0;
     bottom: 3px;
+
+    /* 字符盒子横排居中。每个盒子的宽度由 JS 按实测字符宽度写入,
+       所以 MM:SS 的左右两段宽度恒等,整串居中即等于冒号居中。 */
     display: flex;
-    align-items: center;
     justify-content: center;
+    align-items: center;
 
     /* 鼠标事件一律穿透到 #root。
        拖动与点击的判定都挂在 #root 上(见 main.js 的 pointer 事件),
@@ -86,6 +89,17 @@ body {
     color: var(--color-idle);
     /* 字号由 JS 写入 style.fontSize,这里只兜个底 */
     font-size: 48px;
+}
+
+/* 单个字符的定宽盒子,由 main.js 的 setTimeText() 生成。
+   宽度在 layout() 里按"基准字号下实测的字符宽度 × 缩放比"写入:
+   数字统一按 0-9 里最宽的那个算,所以 00:09 → 00:10 整串宽度不变,字号不抖;
+   冒号按它自己的实测宽度算,左右两段于是严格等宽,冒号必然落在正中。
+   字符在各自盒子里居中,盒子之间不留额外间隙。 */
+#time > .ch {
+    display: inline-block;
+    text-align: center;
+    flex: none;                    /* 不参与 flex 伸缩,宽度完全由 JS 说了算 */
 }
 
 /* 状态配色:类名由 JS 挂在 #root 上,数字与进度条各自取色 */
