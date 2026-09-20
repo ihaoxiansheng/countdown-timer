@@ -23,8 +23,14 @@
              MM:SS 左右两段宽度恒等,冒号必然落在正中,与字体无关。 -->
         <div id="time"></div>
 
-        <!-- 暂停时叠在冒号正中的播放三角,表达"点一下继续" -->
-        <svg id="play-glyph" viewBox="0 0 100 100" aria-hidden="true">
+        <!-- 暂停时叠在冒号正中的播放三角,表达"点一下继续"。
+             viewBox 的宽必须等于三角的墨迹宽(86),不能写 100:
+             SVG 默认 preserveAspectRatio="xMidYMid meet" 是把 viewBox 居中,
+             viewBox 右侧留 14% 空白时,墨迹中心就会落在元素中心偏左 7% 的位置,
+             JS 把元素摆得再准,看上去也是偏的。
+             86/100 与 main.js 的 kGlyphWidthRatio 一致,元素长宽比等于 viewBox
+             长宽比,缩放后墨迹正好铺满元素,墨迹中心即元素中心。 -->
+        <svg id="play-glyph" viewBox="0 0 86 100" aria-hidden="true">
             <polygon points="0,0 0,100 86,50" />
         </svg>
 
