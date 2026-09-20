@@ -99,12 +99,8 @@ body {
     position: absolute;
     display: none;                 /* 默认不显示,暂停时由 CSS 的 state-paused 打开 */
 
-    /* 水平居中:三角要压在数字正中。
-       只写 absolute 而不给水平位置的话会退回 left:0 贴到窗口左边缘,
-       所以这里用 50% + 自身宽度的一半做位移居中。
-       垂直位置与尺寸仍由 JS 按数字的 capHeight 换算后写入。 */
-    left: 50%;
-    transform: translateX(-50%);
+    /* 水平与垂直位置、尺寸全部由 JS 在 layout() 里计算后写入,
+       这样三角能精确对齐冒号的中心位置,不会因文案字符数变化而偏移。 */
 
     fill: var(--color-paused);
     pointer-events: none;          /* 不挡住底下的拖动/点击 */

@@ -41,13 +41,8 @@ impl Phase {
         )
     }
 
-    /// 是否处于暂停(三种暂停都算),前端据此画播放三角并压暗数字
-    pub fn is_paused(self) -> bool {
-        matches!(
-            self,
-            Phase::Paused | Phase::OvertimePaused | Phase::StopwatchPaused
-        )
-    }
+    // 注:"是否暂停"的判断归前端。后端只通过 as_str() 传 phase 字符串,
+    // main.js 的 render() 自己比对三种 *Paused,不需要后端再给一个布尔值。
 
     /// 传给前端的字符串标识。与 main.js 里的 phase 判断一一对应。
     pub fn as_str(self) -> &'static str {

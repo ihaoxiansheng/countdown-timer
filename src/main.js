@@ -75,6 +75,9 @@ function initBaseMetrics() {
 
 // ---------- 状态渲染 ----------
 
+/// 上一帧的快照,供乐观渲染时判断当前状态用
+let lastSnapshot = null;
+
 /**
  * 把后端推来的一帧状态画到界面上。
  * @param {object} s 后端 Snapshot:{ text, progress, phase }
@@ -82,6 +85,13 @@ function initBaseMetrics() {
  *              stopwatch / stopwatchPaused
  */
 function render(s) {
+    // 验证后端推送数据的完整性,避免缺字段时静默失败
+    if (!s || typeof s.text !== 'string' || typeof s.phase !== 'string' || typeof s.progress !== 'number') {
+        console.error('render: 收到不完整的状态数据', s);
+        return;
+    }
+
+    lastSnapshot = s;  // 存一份供 optimisticToggle 使用
     timeEl.textContent = s.text;
 
     // 三种暂停(倒计时暂停、超时暂停、秒表暂停)共用一套视觉
@@ -130,12 +140,14 @@ function layout() {
     const bandH = Math.max(h - barH - padY * 2, 1);
     const usableW = Math.max(w - padX * 2, 1);
 
-    // 按当前文案字符数选用对应的基准度量:5 字符用 "88:88",7 字符用 "8:88:88"。
+    // 按当前文案字符数选用对应的基准度量:5 字符用 "88:88",7 字符及以上用 "8:88:88"。
     // 等宽数字保证相同字符数的串宽度完全一致,字号就不会因 00:09 → 00:10 而抖动。
     const text = timeEl.textContent;
     const charCount = text.length;
     const base = charCount <= 5 ? baseMetrics5 : baseMetrics7;
-    const scale = Math.min(bandH / base.capHeight, usableW / base.width);
+    // 实际字符数:5字符文案用5字符基准,其他用7字符基准(≥7的按7等分)
+    const referenceCharCount = charCount <= 5 ? 5 : Math.max(charCount, 7);
+    const scale = Math.min(bandH / base.capHeight, usableW * referenceCharCount / (base.width * charCount));
     const fontSize = kBaseFontSize * scale;
     const capH = base.capHeight * scale;
 
@@ -146,13 +158,37 @@ function layout() {
 
     barFillEl.parentElement.style.height = `${barH}px`;
 
-    // 播放三角跟着 capHeight 走,始终盖在数字正中
+    // 播放三角跟着 capHeight 走,盖在冒号正中。
+    // 冒号位置取决于文案格式:5 字符 MM:SS 的冒号在索引 2,占 2.5/5 = 50%;
+    // 7 字符 H:MM:SS 的冒号在索引 1,占 1.5/7 ≈ 21.4%;
+    // 8+ 字符 10:MM:SS 等用实际字符数等分。
+    // 用等宽字体测出文案总宽度后,按冒号的字符位置算出它的像素坐标,
+    // 三角的水平中心对齐那个位置,这样无论几位数都不会偏。
     const glyphH = capH * kGlyphHeightRatio;
+    const glyphW = glyphH * kGlyphWidthRatio;
     glyphEl.style.height = `${glyphH}px`;
-    glyphEl.style.width = `${glyphH * kGlyphWidthRatio}px`;
-    // 垂直方向:三角中心对齐数字带的中心。
-    // 水平方向不在这里写,由 CSS 的 left:50% + translateX(-50%) 负责,
-    // 那样三角宽度变化时不用重算偏移量。
+    glyphEl.style.width = `${glyphW}px`;
+
+    // 冒号在文案里的索引(0-based)
+    const colonIdx = text.indexOf(":");
+    if (colonIdx >= 0) {
+        // 等宽字体下每个字符占的宽度,用实际字符数等分
+        const actualWidth = base.width * scale * charCount / referenceCharCount;
+        const charW = actualWidth / charCount;
+        // 冒号中心的水平坐标(相对文案左边缘):索引处 + 半个字符宽
+        const colonCenterInText = (colonIdx + 0.5) * charW;
+        // 文案左边缘相对窗口左边缘的偏移:窗口中心 - 文案宽度一半
+        const textLeft = (w - actualWidth) / 2;
+        // 冒号中心相对窗口左边缘的绝对坐标
+        const colonCenterAbs = textLeft + colonCenterInText;
+        // 三角左边缘 = 冒号中心 - 三角宽度一半
+        glyphEl.style.left = `${colonCenterAbs - glyphW / 2}px`;
+    } else {
+        // 没有冒号(比如空闲态的 "—"),fallback 到窗口中心
+        glyphEl.style.left = `calc(50% - ${glyphW / 2}px)`;
+    }
+
+    // 垂直方向:三角中心对齐数字带的中心
     glyphEl.style.bottom = `${barH + padY + (bandH - glyphH) / 2}px`;
 }
 

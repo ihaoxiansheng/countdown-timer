@@ -8,7 +8,7 @@
     --color-text: #000000;
     --color-error: #ff3b30;        /* 与主窗口的超时红一致 */
     --color-accent: #30b0c7;       /* 与主窗口进度条的 systemTeal 一致 */
-    --color-hint: #8e8e93;         /* 说明文案的灰 */
+    --color-hint: #000000;         /* 说明文案改为黑色,和输入框一致 */
     --color-border: #d1d1d6;       /* 输入框下划线与按钮描边 */
     --window-radius: 12px;
 }
@@ -52,7 +52,7 @@ body {
 /* ---------- 说明文案 ---------- */
 
 #hint {
-    font-size: 11px;
+    font-size: 13px;
     line-height: 1.5;
     text-align: center;
     color: var(--color-hint);
