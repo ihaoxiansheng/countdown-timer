@@ -7,8 +7,12 @@
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <!-- 整个窗口就是一块可拖动区域:按住空白处即可挪动窗口,和 macOS 版一致 -->
-    <div id="root" data-tauri-drag-region title="右键设置倒计时">
+    <!-- 整个窗口都能按住拖动。
+         这里刻意不用 data-tauri-drag-region:那个属性会在 mousedown 的瞬间
+         就进入系统拖动循环,Windows 上从别的窗口切回来的第一次点击会被
+         "激活窗口"吃掉配对的 mouseup,于是窗口黏在鼠标上甩不掉。
+         改由 main.js 判断位移超过阈值后再主动请求拖动。 -->
+    <div id="root" title="右键设置倒计时">
         <!-- 大号数字。等宽数字字体,字号由 JS 按窗口尺寸实时换算 -->
         <div id="time">00:00</div>
 
@@ -16,6 +20,9 @@
         <svg id="play-glyph" viewBox="0 0 100 100" aria-hidden="true">
             <polygon points="0,0 0,100 86,50" />
         </svg>
+
+        <!-- 自定义时间的输入界面不在这里。它是应用自己的一个独立窗口
+             (custom.html),屏幕居中显示,输完即关,倒计时窗口不受影响。 -->
 
         <!-- 底部进度条:轨道常在,填充部分表示剩余比例 -->
         <div id="bar-track">

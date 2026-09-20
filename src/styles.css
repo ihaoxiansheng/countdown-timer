@@ -70,8 +70,8 @@ body {
     justify-content: center;
 
     /* 鼠标事件一律穿透到 #root。
-       原生拖动靠 data-tauri-drag-region 命中的元素来判定,
-       数字盖住了整个窗口中部,不穿透的话按在数字上就拖不动窗口。 */
+       拖动与点击的判定都挂在 #root 上(见 main.js 的 pointer 事件),
+       数字盖住了整个窗口中部,不穿透的话按在数字上既拖不动也点不了。 */
     pointer-events: none;
 
     /* 等宽数字:tabular-nums 保证秒数跳动时宽度不抖 */
@@ -132,3 +132,6 @@ body {
 
 #root.state-paused   #bar-fill { background: var(--color-paused); }
 #root.state-overtime #bar-fill { background: var(--color-overtime); }
+
+/* 自定义时间的输入界面不在这个窗口里,见 custom.html / custom.css:
+   它是一块独立的居中窗口,倒计时窗口从头到尾不参与输入。 */

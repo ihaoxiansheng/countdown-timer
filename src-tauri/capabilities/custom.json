@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "custom-window",
+  "description": "自定义时间输入窗口的权限集:只要能 invoke 命令和关掉自己,别的一概不给",
+  "windows": ["custom"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-close"
+  ]
+}

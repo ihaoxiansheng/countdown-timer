@@ -101,12 +101,39 @@ jobs:
       - name: Display structure of downloaded files
         run: ls -R artifacts
 
+      # GitHub Release 上传附件时会清洗掉文件名里的非 ASCII 字符,
+      # 中文产品名(简易倒计时)生成的 "简易倒计时_1.0.0_aarch64.dmg"
+      # 在下载列表里只会剩下 "_1.0.0_aarch64.dmg" 这种残缺名字。
+      # 所以这里统一复制成 ASCII 文件名再上传,应用自身的显示名不受影响。
+      - name: Rename artifacts to ASCII names
+        run: |
+          set -euo pipefail
+          # 标签形如 v1.0.0,去掉前缀 v 得到版本号
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p release
+
+          # 取匹配到的第一个产物复制为指定名字;产物缺失时只告警,不中断发布
+          copy_one() {
+            local out="$1"
+            shift
+            if [ -e "$1" ]; then
+              cp "$1" "release/${out}"
+            else
+              echo "::warning::缺少产物,已跳过: ${out}"
+            fi
+          }
+
+          copy_one "SimpleCountdown_${version}_macos-aarch64.dmg" artifacts/macos-aarch64-dmg/*.dmg
+          copy_one "SimpleCountdown_${version}_macos-x64.dmg"     artifacts/macos-x86_64-dmg/*.dmg
+          copy_one "SimpleCountdown_${version}_windows-x64-setup.exe" artifacts/windows-installer/*.exe
+          # 免安装版:直接是 release 目录下的主程序 exe,下载即可运行,不写注册表
+          copy_one "SimpleCountdown_${version}_windows-x64-portable.exe" artifacts/windows-portable/*.exe
+
+          ls -l release
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            artifacts/macos-aarch64-dmg/*.dmg
-            artifacts/macos-x86_64-dmg/*.dmg
-            artifacts/windows-installer/*.exe
+          files: release/*
           fail_on_unmatched_files: false
           generate_release_notes: true

@@ -18,7 +18,10 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
-use tauri::{AppHandle, Emitter, LogicalSize, Manager, State, WebviewWindow};
+use tauri::{
+    AppHandle, Emitter, LogicalSize, Manager, State, WebviewUrl, WebviewWindow,
+    WebviewWindowBuilder,
+};
 
 use timer::{Phase, Snapshot, Timer};
 
@@ -31,6 +34,17 @@ const MIN_H: f64 = 44.0;
 
 /// 推帧间隔。100ms 足够让秒数跳变看起来即时,又不会白耗 CPU。
 const TICK_MS: u64 = 100;
+
+/// 自定义时间输入窗口的标签与尺寸。
+/// 标签同时用于判重(已开着就聚焦而不是再建一个)和 capabilities 授权。
+///
+/// 高度是按 custom.html 的内容量出来的,窗口不可缩放,少一点就会裁掉按钮:
+///   上下留白 14×2 = 28、两行提示 ≈ 33、输入框(30px 字号)≈ 41、
+///   错误提示行 ≈ 14、按钮行 ≈ 28、四个元素之间三道 8px 间隙 = 24,
+/// 合计约 168,取 170 留一点余量。
+const CUSTOM_LABEL: &str = "custom";
+const CUSTOM_W: f64 = 320.0;
+const CUSTOM_H: f64 = 170.0;
 
 /// 结束提醒的计时帧数。响铃共 3 声,分布在前 2 秒内:
 /// 归零时第 1 声,0.8 秒后第 2 声,1.6 秒后第 3 声。
@@ -56,6 +70,36 @@ impl AppState {
     }
 }
 
+// ---------- 子进程工具 ----------
+
+/// Windows 的 CREATE_NO_WINDOW 标志。
+///
+/// `#![windows_subsystem = "windows"]` 只保证主程序自己不带控制台,
+/// 管不到它 spawn 出来的子进程:默认情况下系统会给每个控制台子进程
+/// (powershell、cmd 等)分配一个新的控制台窗口,于是屏幕上闪一个黑框。
+/// 建进程时带上这个标志就不会再分配控制台。
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// 建一个不会弹控制台窗口的子进程命令。
+///
+/// 所有调外部命令的地方都必须走这里,不要直接用 `Command::new`,
+/// 否则 Windows 上会闪黑框(见 CREATE_NO_WINDOW 的说明)。
+fn hidden_command(program: &str) -> std::process::Command {
+    // macOS 分支不需要改动这个命令,所以 mut 在那边用不上,加 allow 免掉告警
+    #[allow(unused_mut)]
+    let mut cmd = std::process::Command::new(program);
+
+    #[cfg(target_os = "windows")]
+    {
+        // CommandExt 只在 Windows 上存在,所以 use 也放在条件块里
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    cmd
+}
+
 // ---------- 提示音 ----------
 
 /// 播放系统提示音。两个平台各用各自的原生方式,不引入额外的音频依赖。
@@ -63,16 +107,18 @@ fn play_alert_sound() {
     #[cfg(target_os = "macos")]
     {
         // afplay 是 macOS 自带的命令行播放器,Glass 是系统提示音之一
-        let _ = std::process::Command::new("afplay")
+        let _ = hidden_command("afplay")
             .arg("/System/Library/Sounds/Glass.aiff")
             .spawn();
     }
 
     #[cfg(target_os = "windows")]
     {
-        // PowerShell 的 Beep 不依赖任何音频文件,系统静音时也不会报错
-        let _ = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command", "[console]::beep(880,200)"])
+        // rundll32 直接调用 user32 的 MessageBeep,是 Windows 上最轻的发声方式:
+        // 不需要 PowerShell 启动开销(约 200ms),也没有控制台可闪。
+        // 参数 0x40 = MB_ICONASTERISK,对应系统的"星号"提示音。
+        let _ = hidden_command("rundll32")
+            .args(["user32.dll,MessageBeep", "0x40"])
             .spawn();
     }
 }
@@ -227,7 +273,7 @@ fn handle_menu_event(app: &AppHandle, id: &str) {
             *state.alert_left.lock().unwrap() = 0;
         }
 
-        "custom" => prompt_custom_time(app),
+        "custom" => open_custom_window(app),
 
         "reset_window" => reset_window_size(app),
 
@@ -269,113 +315,91 @@ fn reset_window_size(app: &AppHandle) {
     }
 }
 
-/// 弹出输入框自定义时间,确认后立即开始倒计时。
+/// 打开自定义时间输入窗口:独立窗口,屏幕居中,输完即关。
+///
+/// 这里换过两轮做法:
+///   1. 最早是拉起外部进程弹原生对话框(macOS 的 osascript、Windows 的
+///      VB InputBox)。Windows 上子进程会闪一个控制台黑框,而且 InputBox
+///      是另一个进程的顶层窗口,和这个小挂件完全脱节。
+///   2. 然后改成把输入条内嵌在倒计时窗口里。黑框没有了,但 220×96 的
+///      地方太挤,而且输入框出现的位置跟着挂件跑,不在视线中央。
+/// 现在是应用自己的独立窗口:居中、有足够空间、外观可控,倒计时窗口
+/// 自始至终不动。
+///
+/// 窗口已存在时只把它拉到前台,不重复创建。
+fn open_custom_window(app: &AppHandle) {
+    // 已经开着就聚焦,避免连按菜单叠出一堆窗口
+    if let Some(win) = app.get_webview_window(CUSTOM_LABEL) {
+        let _ = win.set_focus();
+        return;
+    }
+
+    let built = WebviewWindowBuilder::new(
+        app,
+        CUSTOM_LABEL,
+        WebviewUrl::App("custom.html".into()),
+    )
+    .title("自定义时间")
+    .inner_size(CUSTOM_W, CUSTOM_H)
+    .center()                 // 居中显示,这是这一版的主要目的
+    .resizable(false)
+    .minimizable(false)
+    .maximizable(false)
+    .always_on_top(true)      // 倒计时窗口本身也置顶,输入窗口不能被它压住
+    .decorations(false)       // 和主窗口一致的无边框风格,圆角由 CSS 画
+    .transparent(true)
+    .shadow(true)
+    .focused(true)
+    .build();
+
+    if let Err(e) = built {
+        // 建窗口失败没有兜底方案,但也不该让应用崩掉:倒计时还在正常走。
+        eprintln!("自定义时间窗口创建失败: {e}");
+    }
+}
+
+/// 输入窗口启动时取预填文案:当前设定过时长就填它,方便直接改。
+#[tauri::command]
+fn custom_prefill(state: State<AppState>) -> String {
+    let timer = state.timer.lock().unwrap();
+    if timer.total() > 0.0 {
+        timer::format_remaining(timer.total())
+    } else {
+        String::new()
+    }
+}
+
+/// 输入窗口确认后回调这里,把文案解析成时长并立即开始。
+///
 /// 输入支持 "MM:SS"、"H:MM:SS",也支持纯数字(按分钟算)。
 /// 上限 90:00:超过的一律按 90:00 处理,不报错也不打断操作。
-fn prompt_custom_time(app: &AppHandle) {
-    // 对话框必须在主线程之外等待结果,否则会和事件循环互相阻塞,
-    // 所以这里用回调式 API,拿到结果再回来改状态。
-    let app = app.clone();
-    std::thread::spawn(move || {
-        let current = {
-            let state = app.state::<AppState>();
-            let timer = state.timer.lock().unwrap();
-            if timer.total() > 0.0 {
-                timer::format_remaining(timer.total())
-            } else {
-                String::new()
-            }
-        };
-
-        // Tauri 没有内置的文本输入对话框,各平台调各自的原生方式
-        let input = ask_text_input(&current);
-
-        let Some(text) = input else { return };
-
-        match timer::parse_time_input(&text) {
-            Some(secs) => {
-                let state = app.state::<AppState>();
-                // 自定义时长不对应任何预设档位,传 None 清掉勾选
-                state.timer.lock().unwrap().set_and_start(secs, None);
-                *state.alert_left.lock().unwrap() = 0;
-            }
-            None => {
-                // 格式不合法:提示一次,不改动当前计时状态
-                show_message("时间格式不正确", "请按 05:30 或 1:20:00 的格式输入。");
-            }
+/// - Returns: true 表示解析成功已开始;false 表示格式不合法,
+///   前端据此把输入框标红,不再另外弹窗打断操作。
+#[tauri::command]
+fn submit_custom(state: State<AppState>, text: String) -> bool {
+    match timer::parse_time_input(&text) {
+        Some(secs) => {
+            // 自定义时长不对应任何预设档位,传 None 清掉勾选
+            state.timer.lock().unwrap().set_and_start(secs, None);
+            *state.alert_left.lock().unwrap() = 0;
+            true
         }
-    });
-}
-
-/// 弹出文本输入框,取用户输入的时间文案。
-/// - Returns: 用户确认时返回输入内容,取消时返回 None
-#[cfg(target_os = "macos")]
-fn ask_text_input(prefill: &str) -> Option<String> {
-    // osascript 的 display dialog 自带输入框,是 macOS 上最省事的原生方案
-    let script = format!(
-        r#"display dialog "输入 分:秒(如 05:30),只填数字则按分钟计算。
-最长 90:00,超出会自动按 90:00 计。" default answer "{}" with title "自定义时间" buttons {{"取消", "开始"}} default button "开始"
-return text returned of result"#,
-        prefill.replace('"', r#"\""#)
-    );
-
-    let out = std::process::Command::new("osascript")
-        .args(["-e", &script])
-        .output()
-        .ok()?;
-
-    // 用户点取消时 osascript 返回非 0,这里直接当作放弃
-    if !out.status.success() {
-        return None;
-    }
-    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
-}
-
-#[cfg(target_os = "windows")]
-fn ask_text_input(prefill: &str) -> Option<String> {
-    // Windows 用 VB 的 InputBox,同样不需要额外依赖
-    let script = format!(
-        r#"Add-Type -AssemblyName Microsoft.VisualBasic
-[Microsoft.VisualBasic.Interaction]::InputBox("输入 分:秒(如 05:30),只填数字则按分钟计算。`n最长 90:00,超出会自动按 90:00 计。", "自定义时间", "{}")"#,
-        prefill.replace('"', r#""""#)
-    );
-
-    let out = std::process::Command::new("powershell")
-        .args(["-NoProfile", "-Command", &script])
-        .output()
-        .ok()?;
-
-    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    // InputBox 取消时返回空串
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
+        None => false,
     }
 }
 
-/// 弹一个只有"好"按钮的提示框
-#[cfg(target_os = "macos")]
-fn show_message(title: &str, body: &str) {
-    let script = format!(
-        r#"display dialog "{}" with title "{}" buttons {{"好"}} default button "好""#,
-        body, title
-    );
-    let _ = std::process::Command::new("osascript")
-        .args(["-e", &script])
-        .output();
-}
-
-#[cfg(target_os = "windows")]
-fn show_message(title: &str, body: &str) {
-    let script = format!(
-        r#"Add-Type -AssemblyName System.Windows.Forms
-[System.Windows.Forms.MessageBox]::Show("{}", "{}")"#,
-        body, title
-    );
-    let _ = std::process::Command::new("powershell")
-        .args(["-NoProfile", "-Command", &script])
-        .output();
+/// 前端确认"这是一次拖动而不是点击"之后,才请求进入窗口拖动。
+///
+/// 早先窗口靠整块 `data-tauri-drag-region` 拖动,由 WebView 在 mousedown
+/// 当下就进系统的模态拖动循环。Windows 上从别的窗口点回来时,这一次
+/// mousedown 同时承担"激活窗口"的职责,配对的 mouseup 被激活流程吃掉,
+/// 系统拖动循环收不到结束信号,于是窗口黏在鼠标上一直跟着走。
+///
+/// 现在拖动区域交给前端判定:按下先不拖,位移超过阈值才调这里,
+/// 单纯的点击就完全不会碰到拖动循环。
+#[tauri::command]
+fn begin_drag(window: WebviewWindow) -> Result<(), String> {
+    window.start_dragging().map_err(|e| e.to_string())
 }
 
 // ---------- 推帧循环 ----------
@@ -431,7 +455,10 @@ fn main() {
             toggle,
             reset,
             click_toggle,
-            show_menu
+            show_menu,
+            custom_prefill,
+            submit_custom,
+            begin_drag
         ])
         .on_menu_event(|app, event| handle_menu_event(app, event.id().as_ref()))
         .setup(|app| {

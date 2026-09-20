@@ -166,25 +166,91 @@ window.addEventListener("resize", layout);
 
 // ---------- 鼠标交互 ----------
 
-// 左键单击 = 开始/暂停。
-// data-tauri-drag-region 已经接走了拖动,所以这里只需处理"没发生拖动"的情况:
-// 按下与抬起之间位移小于阈值才算点击,避免手抖导致点击失效。
-const kDragThreshold = 3;   // px
-let downX = 0;
-let downY = 0;
+// 拖动与点击的判定阈值(px)。按下后位移超过它才算拖动,否则算点击。
+const kDragThreshold = 4;
 
-rootEl.addEventListener("mousedown", (e) => {
+let downX = 0;          // 按下时的屏幕坐标
+let downY = 0;
+let pressing = false;   // 是否正处于一次左键按下
+let dragging = false;   // 这一次按下是否已经升级成拖动
+
+/**
+ * 按下:只记录起点,不做任何动作。
+ *
+ * 这里刻意不在按下当帧就启动拖动。窗口原先整块是 data-tauri-drag-region,
+ * 那个属性会在 mousedown 当帧进入系统的模态拖动循环;Windows 上从别的
+ * 窗口点回来时,这一次 mousedown 同时承担"激活窗口"的职责,激活过程会
+ * 把配对的 mouseup 吃掉,系统拖动循环收不到结束信号,窗口就黏在鼠标上,
+ * 而那一次点击也随之丢失(表现为暂停/继续没反应)。
+ *
+ * setPointerCapture 把后续的 move/up 都锁定到这个元素上,即使指针移出
+ * 窗口边界也能收到抬起事件,不会再出现"按下了但永远等不到抬起"的状态。
+ */
+rootEl.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
+
+    pressing = true;
+    dragging = false;
     downX = e.screenX;
     downY = e.screenY;
+
+    try {
+        rootEl.setPointerCapture(e.pointerId);
+    } catch {
+        // 捕获失败不影响主流程:大不了指针移出窗口时少收几个事件
+    }
 });
 
-rootEl.addEventListener("mouseup", (e) => {
-    if (e.button !== 0) return;
+/**
+ * 移动:位移超过阈值才升级成拖动,并把后续过程交给系统。
+ * 一次按下只升级一次,所以 begin_drag 不会被重复调用。
+ */
+rootEl.addEventListener("pointermove", (e) => {
+    if (!pressing || dragging) return;
+
     const moved = Math.hypot(e.screenX - downX, e.screenY - downY);
-    if (moved <= kDragThreshold) {
-        invoke("click_toggle");
+    if (moved > kDragThreshold) {
+        dragging = true;
+        // 交给系统拖动循环后,这一次按下不再被当作点击。
+        // 系统接手期间不会再给 webview 发 pointer 事件,所以这里先把
+        // 按下状态清掉,避免拖完之后 pressing 还挂着。
+        pressing = false;
+        invoke("begin_drag");
     }
+});
+
+/**
+ * 抬起:没升级成拖动就算一次点击 = 开始/暂停。
+ */
+rootEl.addEventListener("pointerup", (e) => {
+    if (e.button !== 0) return;
+
+    try {
+        rootEl.releasePointerCapture(e.pointerId);
+    } catch {
+        // 没捕获成功过,这里自然也释放不了,忽略即可
+    }
+
+    if (!pressing || dragging) {
+        pressing = false;
+        return;
+    }
+    pressing = false;
+
+    // 先本地抢一帧,再发命令。后端 100ms 才推一帧,等它回话最坏要差一整帧,
+    // 手感上就是"点了没反应"。乐观渲染让状态变化在当帧就看得见,
+    // 下一帧后端的真实状态会覆盖它,两者不一致时以后端为准。
+    optimisticToggle();
+    invoke("click_toggle");
+});
+
+/**
+ * 指针被系统取消(拖动接手、窗口失焦等)时清掉按下状态,
+ * 否则 pressing 会一直挂着,下一次抬起会被误判成点击。
+ */
+rootEl.addEventListener("pointercancel", () => {
+    pressing = false;
+    dragging = false;
 });
 
 // 右键:交给后端弹原生菜单(菜单项由 Rust 侧构建,两平台外观都是原生的)
@@ -193,12 +259,39 @@ rootEl.addEventListener("contextmenu", (e) => {
     invoke("show_menu");
 });
 
+/**
+ * 本地先行渲染一次"开始/暂停"的结果,纯粹为了手感,不改变任何真实状态。
+ *
+ * 只处理状态翻转明确的四种情形。超时阶段(overtime / overtimePaused)
+ * 刻意跳过:后端的 click_toggle 在响铃期间第一次点击是"停响铃"而不是
+ * "暂停",这里猜不准,猜错会让画面先跳一下再被纠正,反而更难受。
+ * 空闲态也跳过,因为前端不知道是否已设定过时长。
+ */
+function optimisticToggle() {
+    if (!lastSnapshot) return;
+
+    const next = {
+        running: "paused",
+        paused: "running",
+        stopwatch: "stopwatchPaused",
+        stopwatchPaused: "stopwatch",
+    }[lastSnapshot.phase];
+
+    if (!next) return;
+
+    render({ ...lastSnapshot, phase: next });
+}
+
 // ---------- 键盘快捷键 ----------
 
 // 空格 = 开始/暂停,R 或 Esc = 重置。与 macOS 版一致。
+// 自定义时间的输入已经搬到独立窗口(custom.html),那边的按键由它自己处理,
+// 这个窗口不再需要判断"是否正在编辑"。
 window.addEventListener("keydown", (e) => {
     if (e.code === "Space") {
         e.preventDefault();
+        // 和鼠标点击一样先抢一帧,避免等后端那 100ms
+        optimisticToggle();
         invoke("toggle");
     } else if (e.code === "Escape" || e.code === "KeyR") {
         e.preventDefault();

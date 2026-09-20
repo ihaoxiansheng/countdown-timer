@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>自定义时间</title>
+    <link rel="stylesheet" href="custom.css">
+</head>
+<body>
+    <!-- 独立的自定义时间输入窗口。
+         不复用倒计时主窗口:主窗口只有 220×96,输入条挤在数字上既难看也难点。
+         这个窗口由 Rust 侧按需创建、居中显示,关掉即销毁,主窗口位置不受影响。 -->
+    <div id="panel">
+        <!-- 说明文案。写死在页面里,不需要从后端传 -->
+        <p id="hint">输入 分:秒,如 05:30<br>只填数字按分钟计,最长 90:00</p>
+
+        <!-- 时间输入框。autofocus 让窗口一显示就能直接打字。
+             aria-describedby 指向下面的错误行:平时那行是 visibility:hidden,
+             不在无障碍树里所以不会被念出来;标红时它变可见,配合 custom.js
+             写入的 aria-invalid 一起播报,读屏用户才知道这次输入被拒了。 -->
+        <input id="field" type="text" inputmode="numeric"
+               placeholder="05:30" spellcheck="false" autofocus
+               aria-label="自定义时间,格式 分:秒,回车开始,Esc 取消"
+               aria-describedby="error">
+
+        <!-- 格式错误时的提示行。平时占位但不可见,避免出现时挤动布局 -->
+        <p id="error">格式不对,试试 05:30 或 1:20:00</p>
+
+        <div id="buttons">
+            <button id="cancel" type="button">取消</button>
+            <button id="start" type="button">开始</button>
+        </div>
+    </div>
+
+    <script type="module" src="custom.js"></script>
+</body>
+</html>
