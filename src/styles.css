@@ -102,6 +102,17 @@ body {
     flex: none;                    /* 不参与 flex 伸缩,宽度完全由 JS 说了算 */
 }
 
+/* 被播放三角占位的那个冒号:暂停时隐藏,让三角独占这个字符槽。
+   类名由 layout() 挂在冒号盒子上,但只在 state-paused 下才真正生效,
+   所以运行态、超时态的冒号照常显示。
+
+   刻意用 visibility 而不是 display:none —— 盒子必须继续占着位置。
+   一旦让它脱离排版,左右两段宽度就不再相等,数字会横向重排、
+   整串宽度变化还会带着字号一起抖(这正是 setTimeText 用定宽盒子要避免的事)。 */
+#root.state-paused #time > .ch-hidden-by-glyph {
+    visibility: hidden;
+}
+
 /* 状态配色:类名由 JS 挂在 #root 上,数字与进度条各自取色 */
 #root.state-running #time { color: var(--color-running); }
 #root.state-paused  #time { color: var(--color-paused); opacity: var(--paused-text-alpha); }
@@ -113,8 +124,9 @@ body {
     position: absolute;
     display: none;                 /* 默认不显示,暂停时由 CSS 的 state-paused 打开 */
 
-    /* 水平与垂直位置、尺寸全部由 JS 在 layout() 里计算后写入,
-       这样三角能精确对齐冒号的中心位置,不会因文案字符数变化而偏移。 */
+    /* 水平与垂直位置、尺寸全部由 JS 在 layout() 里计算后写入:
+       水平取冒号盒子的实测中心(冒号本身已隐藏,只作为占位槽),
+       垂直对齐数字的墨迹中心,不会因文案字符数变化而偏移。 */
 
     fill: var(--color-paused);
     pointer-events: none;          /* 不挡住底下的拖动/点击 */

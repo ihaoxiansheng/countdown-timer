@@ -101,7 +101,10 @@ function initBaseMetrics() {
     for (let d = 0; d <= 9; d++) {
         digitW = Math.max(digitW, measureChar(String(d)));
     }
-    baseMetrics = { digitW, colonW: measureChar(":") };
+    baseMetrics = {
+        digitW,
+        colonW: measureChar(":"),
+    };
 }
 
 // 非数字、非冒号字符的宽度缓存(比如空闲态的 "—"),量一次就记下来
@@ -212,9 +215,15 @@ function setTimeText(text) {
 }
 
 /**
- * 挑出三角要盖住的那个冒号元素。
+ * 挑出三角要占位的那个冒号元素。
+ *
+ * 注意语义:三角不是"盖住"冒号,而是"顶替"它 —— 暂停时这个冒号会被藏起来
+ * (见 styles.css 的 .ch-hidden-by-glyph),盒子仍然占位,只是不画墨迹。
+ * 所以这里挑的是"让位的那个槽"。
+ *
  * MM:SS 只有一个冒号,直接用它(它就在窗口正中)。
- * H:MM:SS 有两个,取离整串水平中心更近的那个,三角才不会跑到边上。
+ * H:MM:SS 有两个,取离**窗口正中**更近的那个(不是离文案中心更近 ——
+ * 1:23:45 这种左短右长的文案,几何中心会偏右,按文案中心挑会选错冒号)。
  * @returns {HTMLElement|null} 没有冒号时返回 null
  */
 function pickColonEl() {
@@ -222,16 +231,15 @@ function pickColonEl() {
     if (colons.length === 0) return null;
     if (colons.length === 1) return colons[0];
 
-    // 整串文案的水平中心:取首字符左边缘与末字符右边缘的中点
-    const firstRect = charEls[0].getBoundingClientRect();
-    const lastRect = charEls[charEls.length - 1].getBoundingClientRect();
-    const textCenter = (firstRect.left + lastRect.right) / 2;
+    // 窗口水平正中(相对 viewport)
+    const rootRect = rootEl.getBoundingClientRect();
+    const windowCenter = rootRect.left + rootRect.width / 2;
 
     let best = colons[0];
     let bestDist = Infinity;
     for (const el of colons) {
         const rect = el.getBoundingClientRect();
-        const dist = Math.abs(rect.left + rect.width / 2 - textCenter);
+        const dist = Math.abs(rect.left + rect.width / 2 - windowCenter);
         if (dist < bestDist) {
             bestDist = dist;
             best = el;
@@ -294,6 +302,21 @@ function layout() {
     // 三角水平位置:直接取冒号盒子排版后的实测坐标,不做任何宽度推算。
     // 上面刚写完宽度,这里读 rect 会触发一次同步重排,拿到的就是新版面。
     const colonEl = pickColonEl();
+
+    // 暂停时,被三角占位的那个冒号要藏起来(CSS 里只在 state-paused 下生效)。
+    //
+    // 为什么必须让位,而不是继续调三角的位置:三角是尖朝右的等腰三角形
+    // (polygon 0,0 0,100 86,50),垂直方向上正中最宽、上下两端收成 0;
+    // 冒号那两个点恰好长在上下两端。实测 220x96 窗口(fontSize 75.59):
+    //   上点 y=36.77..47.77,落在三角高度的 4% 处,三角那一行只有 3.3px 宽,
+    //   点却要 11px 的覆盖,于是露出 22.73px;下点在 92% 处同理露出 18.75px。
+    // 要让上点真被盖住,需要把三角加宽到 87px 以上 —— 比整个字号还宽。
+    // 也就是说"三角盖住冒号"在这个形状下几何无解,再怎么挪都会有一个点露在外面。
+    // 既然无解就不叠:冒号让出这个字符槽,三角独占。
+    for (const el of charEls) {
+        el.classList.toggle("ch-hidden-by-glyph", el === colonEl);
+    }
+
     if (colonEl) {
         const rootRect = rootEl.getBoundingClientRect();
         const colonRect = colonEl.getBoundingClientRect();
@@ -305,7 +328,15 @@ function layout() {
         glyphEl.style.left = `${w / 2 - glyphW / 2}px`;
     }
 
-    // 垂直方向:三角中心对齐数字带的中心
+    // 垂直方向:三角中心对齐数字的墨迹中心。
+    //
+    // bandH 是按 kCapHeightRatio 推出来的数字带。实测(220x96,fontSize 75.59):
+    // 带中心 cy=46.57,而数字 0/5/8 的真实墨迹中心 cy=47.93,只差 1.36px ——
+    // 常量推导本来就够准,不需要再引入实测偏移(实测值会随两平台字体漂移)。
+    //
+    // 刻意不去对齐"冒号的墨迹中心":冒号墨迹中心比数字墨迹中心低 9.22px,
+    // 按它对齐会让三角明显蹲在数字下方。冒号既然已经让位藏起来了,
+    // 三角就该跟真正可见的数字对齐。
     glyphEl.style.bottom = `${barH + padY + (bandH - glyphH) / 2}px`;
 }
 
